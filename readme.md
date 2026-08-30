@@ -3,7 +3,7 @@
   
   [![Build](https://github.com/action-pack/send-mail/actions/workflows/build.yml/badge.svg)](https://github.com/action-pack/send-mail/)
   [![Version](https://img.shields.io/github/v/tag/action-pack/send-mail?label=version&sort=semver&color=066da5)](https://github.com/marketplace/actions/send-mail)
-  [![Size](https://img.shields.io/github/size/action-pack/send-mail/dist/index.js?branch=release/v1.10&label=size&color=066da5)](https://github.com/action-pack/send-mail/)
+  [![Size](https://img.shields.io/github/size/action-pack/send-mail/dist/index.js?branch=release/v1.16&label=size&color=066da5)](https://github.com/action-pack/send-mail/)
   
 </div></h1>
 
@@ -62,5 +62,6 @@ Instead of using your normal Google password, use an App password.
 This is needed to create an App password.
 2. [Create an App password](https://support.google.com/accounts/answer/185833?hl=en) for `Mail`.
 
+
 ## Stars 🌟
-[![Stars](https://starchart.cc/action-pack/send-mail.svg?variant=adaptive)](https://starchart.cc/action-pack/send-mail)
+[![Stargazers](https://raw.githubusercontent.com/star-stats/stars/refs/heads/data/charts/action-pack-send-mail.svg)](https://github.com/action-pack/send-mail/stargazers)

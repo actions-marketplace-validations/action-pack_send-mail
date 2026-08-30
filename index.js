@@ -1,16 +1,21 @@
 const fs = require("fs");
 const path = require("path");
+const dns = require("dns");
 const core = require("@actions/core");
 const glob = require("@actions/glob");
 const showdown = require("showdown");
 const nodemailer = require("nodemailer");
 
+function getBooleanInput(name) {
+  return core.getInput(name, { required: false }).toLowerCase() === "true";
+}
+
 function getText(textOrFile, convertMarkdown) {
-  let text = textOrFile;
+  let text = textOrFile || "";
 
   // Read text from file
-  if (textOrFile.startsWith("file://")) {
-    const file = textOrFile.replace("file://", "");
+  if (text.startsWith("file://")) {
+    const file = text.slice("file://".length);
     text = fs.readFileSync(file, "utf8");
   }
 
@@ -24,113 +29,145 @@ function getText(textOrFile, convertMarkdown) {
 }
 
 function getFrom(from, username) {
-  if (from.match(/.+ <.+@.+>/)) {
+  if (/.+ <.+@.+>/.test(from)) {
     return from;
+  }
+
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(from)) {
+    return from;
+  }
+
+  if (!username) {
+    throw new Error("Username must be specified when 'from' does not contain an email address.");
   }
 
   return `"${from}" <${username}>`;
 }
 
 async function getAttachments(attachments) {
-  const globber = await glob.create(attachments.split(',').join('\n'));
+  if (!attachments) {
+    return undefined;
+  }
+
+  const patterns = attachments
+    .split(",")
+    .map((attachment) => attachment.trim())
+    .filter(Boolean)
+    .join("\n");
+
+  if (!patterns) {
+    return undefined;
+  }
+
+  const globber = await glob.create(patterns);
   const files = await globber.glob();
-  return files.map(f => ({
-    filename: path.basename(f),
-    path: f,
-    cid: f.replace(/^.*[\\\/]/, '')
+
+  if (!files.length) {
+    throw new Error("No files matched the attachment pattern.");
+  }
+
+  return files.map((file) => ({
+    filename: path.basename(file),
+    path: file,
+    cid: path.basename(file),
   }));
 }
 
 function sleep(ms) {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isTemporaryError(error) {
+  if (error.responseCode >= 400 && error.responseCode < 500) {
+    return true;
+  }
+
+  return error.message.includes("Try again later,");
+}
+
+// Resolve the SMTP hostname to IPv4 before passing it to Nodemailer.
+async function resolveIPv4(hostname) {
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(hostname)) {
+    return hostname;
+  }
+
+  const addresses = await dns.promises.resolve4(hostname);
+
+  if (!addresses.length) {
+    throw new Error(`No IPv4 address found for SMTP host '${hostname}'`);
+  }
+
+  return addresses[0];
 }
 
 async function main() {
   try {
-    let secure = "true"
-    let username = ""
-    let password = ""
-    let serverPort = "465"
-    let serverAddress = ""
+    let secure = "true";
+    let username = "";
+    let password = "";
+    let serverPort = "465";
+    let serverAddress = "";
 
-    const connectionUrl = core.getInput("connection_url")
+    const connectionUrl = core.getInput("connection_url");
+
     if (connectionUrl) {
-      const url = new URL(connectionUrl)
+      const url = new URL(connectionUrl);
+
       switch (url.protocol) {
+        case "smtp:":
+          serverPort = "25";
+          secure = "false";
+          break;
+
+        case "smtp+starttls:":
+          serverPort = "465";
+          secure = "true";
+          break;
+
+        case "smtps:":
+          serverPort = "465";
+          secure = "true";
+          break;
+
         default:
           throw new Error(`Unsupported connection protocol '${url.protocol}'`);
-        case "smtp:":
-          serverPort = "25"
-          secure = "false"
-          break
-        case "smtp+starttls:":
-          serverPort = "465"
-          secure = "true"
-          break
       }
+
       if (url.hostname) {
-        serverAddress = url.hostname
+        serverAddress = url.hostname;
       }
+
       if (url.port) {
-        serverPort = url.port
+        serverPort = url.port;
       }
+
       if (url.username) {
-        username = unescape(url.username)
+        username = decodeURIComponent(url.username);
       }
+
       if (url.password) {
-        password = unescape(url.password)
+        password = decodeURIComponent(url.password);
       }
     }
 
-    const subject = core.getInput("subject", {
-      required: true
-    });
-    const from = core.getInput("from", {
-      required: true
-    });
-    const to = core.getInput("to", {
-      required: false
-    });
-    const body = core.getInput("body", {
-      required: false
-    });
-    const htmlBody = core.getInput("html_body", {
-      required: false
-    });
-    const cc = core.getInput("cc", {
-      required: false
-    });
-    const bcc = core.getInput("bcc", {
-      required: false
-    });
-    const replyTo = core.getInput("reply_to", {
-      required: false
-    });
-    const inReplyTo = core.getInput("in_reply_to", {
-      required: false
-    });
-    const attachments = core.getInput("attachments", {
-      required: false
-    });
-    const convertMarkdown = core.getInput("convert_markdown", {
-      required: false
-    });
-    const ignoreCert = core.getInput("ignore_cert", {
-      required: false
-    });
-    const priority = core.getInput("priority", {
-      required: false
-    });
-    const nodemailerlog = core.getInput("nodemailerlog", {
-      required: false
-    });
-    const nodemailerdebug = core.getInput("nodemailerdebug", {
-      required: false
-    });
+    const subject = core.getInput("subject", { required: true });
+    const from = core.getInput("from", { required: true });
+    const to = core.getInput("to", { required: false });
+    const body = core.getInput("body", { required: false });
+    const htmlBody = core.getInput("html_body", { required: false });
+    const cc = core.getInput("cc", { required: false });
+    const bcc = core.getInput("bcc", { required: false });
+    const replyTo = core.getInput("reply_to", { required: false });
+    const inReplyTo = core.getInput("in_reply_to", { required: false });
+    const attachments = core.getInput("attachments", { required: false });
+    const priority = core.getInput("priority", { required: false });
 
-    // if neither to, cc or bcc is provided, throw error
+    const convertMarkdown = getBooleanInput("convert_markdown");
+    const ignoreCert = getBooleanInput("ignore_cert");
+    const nodemailerlog = getBooleanInput("nodemailerlog");
+    const nodemailerdebug = getBooleanInput("nodemailerdebug");
+
+    // If neither to, cc or bcc is provided, throw error.
     if (!to && !cc && !bcc) {
       throw new Error("At least one of 'to', 'cc' or 'bcc' must be specified");
     }
@@ -139,57 +176,60 @@ async function main() {
       throw new Error("Server address must be specified");
     }
 
+    serverPort = Number.parseInt(serverPort, 10);
+
+    if (!Number.isInteger(serverPort)) {
+      throw new Error("Server port must be a valid number");
+    }
+
+    const originalServerAddress = serverAddress;
+    serverAddress = await resolveIPv4(serverAddress);
+
     const transport = nodemailer.createTransport({
       host: serverAddress,
       name: "github.com",
       auth: username && password ? {
         user: username,
-        pass: password
+        pass: password,
       } : undefined,
       port: serverPort,
       secure: secure === "true",
-      tls: ignoreCert == "true" ? {
-        rejectUnauthorized: false
-      } : undefined,
-      logger: nodemailerdebug == "true" ? true : nodemailerlog,
+      tls: {
+        servername: originalServerAddress,
+        ...(ignoreCert ? { rejectUnauthorized: false } : {}),
+      },
+      logger: nodemailerdebug || nodemailerlog,
       debug: nodemailerdebug,
-    })
+    });
 
-    var i = 1;
-    while (true) {
+    for (let i = 1; ; i++) {
       try {
-        const info = await transport.sendMail({
+        await transport.sendMail({
           from: getFrom(from, username),
-          to: to,
+          to: to || undefined,
           subject: getText(subject, false),
-          cc: cc ? cc : undefined,
-          bcc: bcc ? bcc : undefined,
-          replyTo: replyTo ? replyTo : undefined,
-          inReplyTo: inReplyTo ? inReplyTo : undefined,
-          references: inReplyTo ? inReplyTo : undefined,
+          cc: cc || undefined,
+          bcc: bcc || undefined,
+          replyTo: replyTo || undefined,
+          inReplyTo: inReplyTo || undefined,
+          references: inReplyTo || undefined,
           text: body ? getText(body, false) : undefined,
           html: htmlBody ? getText(htmlBody, convertMarkdown) : undefined,
-          priority: priority ? priority : undefined,
-          attachments: attachments ? (await getAttachments(attachments)) : undefined,
+          priority: priority || undefined,
+          attachments: await getAttachments(attachments),
         });
+
         break;
       } catch (error) {
-        if (!error.message.includes("Try again later,")) {
-          core.setFailed(error.message)
+        if (!isTemporaryError(error) || i > 20) {
+          core.setFailed(error.message);
           break;
         }
-        if (i > 20) {
-          core.setFailed(error.message)
-          break;
-        }
-        console.log("Received: " + error.message);
-        if (i < 2) {
-          console.log("Trying again in a minute...");
-        } else { 
-          console.log("Trying again in " + i + " minutes...");
-        }
+
+        console.log(`Received: ${error.message}`);
+        console.log(`Trying again in ${i === 1 ? "a minute" : `${i} minutes`}...`);
+
         await sleep(i * 60000);
-        i++;
       }
     }
   } catch (error) {
